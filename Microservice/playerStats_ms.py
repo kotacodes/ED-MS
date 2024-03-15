@@ -1,51 +1,56 @@
+import os
+import csv
+import io
+from flask import Flask, request, Response, make_response
+from flask_cors import CORS
 from pymongo import MongoClient
 
-client = MongoClient("localhost", 27017)
-nba_db = client.NBAStats
-gameStats = nba_db.gamestats
+app = Flask(__name__)
+CORS(app, resources={r"/*": {"origins": "http://localhost:8000"}})  # only accept requests from nba-stat cliet
+db_uri = os.getenv("MONGO_URI")
+client = MongoClient(db_uri)
+nba_db = client["nba_db"]
+game_stats = nba_db.game_stats
 
+def generate_stats_file(json_player_stats):
+    """
+    Generates the player_stats csv file.
+    """
+    
+    file_name = "player_stats.csv"
 
-while 1: 
-    f = open("callto.txt", 'r')
-    boolE = False 
-    concact = ""
-    cct2 = ""
+    # write stats from json to csv
+    with open(file_name, 'w', newline='') as csv_file:
+        column_names = list(json_player_stats[0].keys())
+        csv_writer = csv.DictWriter(csv_file, fieldnames=column_names)
+        csv_writer.writeheader()
+        csv_writer.writerows(json_player_stats)
 
-    char = f.read(1)
+    return file_name
 
-    # Waits til there is contents in file
-    while not char:
-        char = f.read(1)
+@app.route('/download-game-stats', methods=['GET'])
+def download_game_stats():
+    """
+    Handles the request to download player stats. Calls generate_stats_file() and
+    return the generated csv file in the response.
+    """
+    
+    player_id = request.args.get('player-id')
+    final_output = []
 
-    # Concacts the input into 2 variables
-    while 1:
-        if not char: 
-            break
+    # get game stats for player
+    for game in game_stats.find({'player_id': player_id}, {'_id': False}):
+        final_output.append(game)
 
-        if char == ',':
-            boolE = True 
-        elif boolE == False: 
-            concact += char
-        else:
-            cct2 += char
-        char = f.read(1)
+    file_name = generate_stats_file(final_output)
 
-    # Puts concacts into variables
-    playerID = concact
-    inputNum = int(cct2)
+    # open stats file and return it in response
+    with open(file_name, 'rb') as csv_file:
+        response = make_response(csv_file.read())
+        response.headers['Content-Disposition'] = f'attachment; filename={file_name}'
+        response.mimetype = 'text/csv'
 
-    finalOutput = []
+    return response
 
-    # Retrieve matched game stats for player, append the to array
-    for game in gameStats.find():
-        if playerID == game['player_id']:
-            finalOutput.append(game)
-            if len(finalOutput) >= inputNum:
-                break
-
-    # Output to output.txt
-    f.close()
-    output = open("output.txt", 'w')
-    output.write(str(finalOutput))
-    output.close()
-    open('callto.txt', 'w').close()
+if __name__ == '__main__':
+    app.run(debug=True, port=5000)
